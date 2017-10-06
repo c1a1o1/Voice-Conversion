@@ -1,0 +1,175 @@
+{
+    "training": {
+        "n_unroll": 5, 
+        "max_iter": 300000, 
+        "datadir": "./dataset/vcc2016/bin/Training Set/*/*.bin", 
+        "batch_size": 64, 
+        "epoch": 200, 
+        "lr": 0.0001, 
+        "beta1": 0.5, 
+        "clamping": 0.01, 
+        "gamma": 0.01
+    }, 
+    "center": 0, 
+    "generator": {
+        "kernel": [
+            [
+                9, 
+                1
+            ], 
+            [
+                7, 
+                1
+            ], 
+            [
+                7, 
+                1
+            ], 
+            [
+                1025, 
+                1
+            ]
+        ], 
+        "l2-reg": 1e-06, 
+        "hwc": [
+            19, 
+            1, 
+            81
+        ], 
+        "merge_dim": 171, 
+        "stride": [
+            [
+                3, 
+                1
+            ], 
+            [
+                3, 
+                1
+            ], 
+            [
+                3, 
+                1
+            ], 
+            [
+                1, 
+                1
+            ]
+        ], 
+        "output": [
+            32, 
+            16, 
+            8, 
+            1
+        ]
+    }, 
+    "y_dim": 10, 
+    "z_dim": 64, 
+    "hwc": [
+        513, 
+        1, 
+        1
+    ], 
+    "dataset": {
+        "datadir": "/home/jrm/proj/vc2016b/TR_log_SP_Z_LT8000", 
+        "target_file_filter": "(TF2).*(150|[01][0-4]\\d|0\\d\\d)\\.bin", 
+        "source_file_filter": "(SF1).*(150|[01][0-4]\\d|0\\d\\d)\\.bin"
+    }, 
+    "encoder": {
+        "kernel": [
+            [
+                7, 
+                1
+            ], 
+            [
+                7, 
+                1
+            ], 
+            [
+                7, 
+                1
+            ], 
+            [
+                7, 
+                1
+            ], 
+            [
+                7, 
+                1
+            ]
+        ], 
+        "output": [
+            16, 
+            32, 
+            64, 
+            128, 
+            256
+        ], 
+        "l2-reg": 1e-06, 
+        "stride": [
+            [
+                3, 
+                1
+            ], 
+            [
+                3, 
+                1
+            ], 
+            [
+                3, 
+                1
+            ], 
+            [
+                3, 
+                1
+            ], 
+            [
+                3, 
+                1
+            ]
+        ]
+    }, 
+    "mode": "VAE-GAN", 
+    "discriminator": {
+        "kernel": [
+            [
+                7, 
+                1
+            ], 
+            [
+                7, 
+                1
+            ], 
+            [
+                115, 
+                1
+            ]
+        ], 
+        "feature_layer": 1, 
+        "merge_dim": 1024, 
+        "stride": [
+            [
+                3, 
+                1
+            ], 
+            [
+                3, 
+                1
+            ], 
+            [
+                3, 
+                1
+            ]
+        ], 
+        "l2-reg": 1e-06, 
+        "output": [
+            16, 
+            32, 
+            64
+        ]
+    }, 
+    "validation": {
+        "source_speaker": "SF1", 
+        "target_speaker": "TF2"
+    }, 
+    "LAMBDA": 10
+}
