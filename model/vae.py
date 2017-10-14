@@ -4,6 +4,7 @@ import tensorflow as tf
 import numpy as np
 from tensorflow.contrib import losses
 from tensorflow.contrib import slim
+from util.ops import selu_relu
 #from tensorflow.contrib import losses
 from util.image import nchw_to_nhwc
 from analyzer import read_whole_features, SPEAKERS, pw2wav, Tanhize
@@ -194,7 +195,7 @@ class VAWGAN(object):
                 [slim.batch_norm],
                 scale=True,
                 data_format = "NCHW",
-                decay=0.99, epsilon=1e-5,
+                decay=0., epsilon=1e-5,
                 is_training=is_training,
                 trainable=True,
                 scope = 'e-BN'):
@@ -205,7 +206,7 @@ class VAWGAN(object):
                         weights_regularizer=slim.l2_regularizer(subnet['l2-reg']),
                         normalizer_fn=slim.batch_norm,
                         trainable = True,
-                        activation_fn=tf.nn.relu):
+                        activation_fn=selu_relu):
 
                     for i in range(n_layer):
                         x = slim.conv2d(
@@ -236,7 +237,7 @@ class VAWGAN(object):
             weights_regularizer=slim.l2_regularizer(l2_reg),
             normalizer_fn=slim.batch_norm,
             trainable=True,
-            activation_fn=tf.nn.relu):
+            activation_fn=selu_relu):
             for var in var_list:
                 x = x + slim.fully_connected(var)
 
@@ -259,7 +260,7 @@ class VAWGAN(object):
                 scale=True,
                 trainable = True,
                 data_format = "NCHW",
-                decay=0.99, epsilon=1e-5, #decay = 0.997
+                decay=0., epsilon=1e-5, #decay = 0.997
                 is_training=is_training,
                 scope='g-BN'):
                 '''
@@ -278,7 +279,7 @@ class VAWGAN(object):
                         trainable = True,
                         weights_regularizer=slim.l2_regularizer(subnet['l2-reg']),
                         normalizer_fn=slim.batch_norm,
-                        activation_fn=tf.nn.relu):
+                        activation_fn=selu_relu):
 
                     for i in range(n_layer -1):
                         x = slim.conv2d_transpose(
@@ -308,59 +309,65 @@ class VAWGAN(object):
     def nhwc_to_nchw(self, x):
         return tf.transpose(x, [0, 3, 1, 2])
 
-    def discriminator(self, x, is_training):
-
+    def discriminator(self, x, is_training, reuse=False):
         n_layer = len(self.arch['discriminator']['output'])
         h, w, c = self.arch['hwc']
         subnet = self.arch['discriminator']
         feature = list()
         x = self.nhwc_to_nchw(x)
         print("discriminator x shape:", x.get_shape().as_list())
-        with slim.arg_scope(
-            [slim.batch_norm],
-            scale=True,
-            trainable = True,
-            data_format="NCHW",
-            decay=0.99, epsilon=1e-5,
-            is_training=is_training,
+        with tf.variable_scope("discriminator", reuse = reuse) as scope:
 
-            scope = 'd-BN'):
             with slim.arg_scope(
-                    [slim.conv2d],
-                    weights_regularizer=slim.l2_regularizer(subnet['l2-reg']),
-                    normalizer_fn=slim.batch_norm,
-                    activation_fn=tf.nn.relu,
-                    trainable = True,
-                    data_format = "NCHW"
-                    ):
-                x = slim.conv2d(
-                    x,
-                    subnet['output'][0],
-                    subnet['kernel'][0],
-                    subnet['stride'][0],
-                    normalizer_fn=None
-                    )
-                feature.append(x)
-                for i in range(1, n_layer):
+                [slim.batch_norm],
+                scale=True,
+                trainable = True,
+                data_format="NCHW",
+                decay=0., epsilon=1e-5,
+                is_training=is_training,
+                scope = 'd-BN'):
+                with slim.arg_scope(
+                        [slim.conv2d],
+                        weights_regularizer=slim.l2_regularizer(subnet['l2-reg']),
+                        normalizer_fn=slim.batch_norm,
+                        activation_fn=selu_relu,
+                        trainable = True,
+                        data_format = "NCHW"
+                        ):
                     x = slim.conv2d(
                         x,
-                        subnet['output'][i],
-                        subnet['kernel'][i],
-                        subnet['stride'][i],
+                        subnet['output'][0],
+                        subnet['kernel'][0],
+                        subnet['stride'][0],
+                        normalizer_fn=None
                         )
                     feature.append(x)
+                    for i in range(1, n_layer):
+                        x = slim.conv2d(
+                            x,
+                            subnet['output'][i],
+                            subnet['kernel'][i],
+                            subnet['stride'][i],
+                            )
+                        feature.append(x)
 
-        print("x shape:", x.get_shape().as_list())
-        x = slim.flatten(x)
-        h = slim.flatten(feature[subnet['feature_layer'] - 1])
-        if h.get_shape().as_list()[-1] == 2736:
-            h = tf.layers.dense(h, 16, trainable=True)
-        print("h shape:", h.get_shape().as_list())
-        print("x flattend shape:", x.get_shape().as_list())
-        x = slim.fully_connected(x, 1, activation_fn = None, trainable=True)
+            print("x shape:", x.get_shape().as_list())
+            x = slim.flatten(x)
+            h = slim.flatten(feature[subnet['feature_layer'] - 1])
+            h = slim.fully_connected(h, 1024, trainable=True)
+            print("h shape:", h.get_shape().as_list())
+            print("x flattend shape:", x.get_shape().as_list())
+            x = slim.fully_connected(x, 1, activation_fn = None, trainable=True)
         return x, h  # no explicit `sigmoid`
 
     def loss(self, x, y, is_training=True):
+
+        batch_size = self.arch['training']['batch_size']
+        alpha = tf.random_uniform(
+            shape=[batch_size, 1,1,1],
+            minval=0.,
+            maxval=1.
+        )
         with tf.name_scope('loss'):
             with tf.variable_scope("encoder") as scope:  #specify variable_scope
                 z_mu, z_lv = self.encoder(x, is_training)       #so that to collect trainable
@@ -369,8 +376,10 @@ class VAWGAN(object):
                     GaussianKLD(
                         slim.flatten(z_mu),
                         slim.flatten(z_lv),
-                        slim.flatten(tf.zeros_like(z_mu)),
-                        slim.flatten(tf.zeros_like(z_lv)),
+                        #slim.flatten(tf.zeros_like(z_mu)),
+                        #slim.flatten(tf.zeros_like(z_lv)),
+                        slim.flatten(tf.random_normal(tf.shape(z_mu))),
+                        slim.flatten(tf.random_normal(tf.shape(z_lv))),
                     )
                 )
             with tf.variable_scope("generator") as scope:
@@ -382,53 +391,63 @@ class VAWGAN(object):
                 disc_real, x_through_d = self.discriminator(x, is_training)
                 print("disc_real shape:", disc_real.get_shape().as_list())
                 print("x_through_d:", x_through_d.get_shape().as_list())
-                disc_fake, xh_through_d = self.discriminator(xh, is_training)
+                disc_fake, xh_through_d = self.discriminator(xh, is_training, reuse = True)
                 logPx = -tf.reduce_mean(
                     GaussianLogDensity(
                         x_through_d,
                         xh_through_d,
-                        tf.zeros_like(xh_through_d)),
+                        tf.zeros_like(xh_through_d),
+                        )
                 )
-
+                print("before gradient x shape:", x.get_shape().as_list())
+                differences = xh - x
+                differences = self.nhwc_to_nchw(differences)
+                print ("differences shape:", differences.get_shape().as_list())
+                interpolates = self.nhwc_to_nchw(x) + (alpha*differences)
+                print("interpolates shape:", interpolates.get_shape().as_list())
+                interpolates = tf.transpose(interpolates, [0, 2, 1, 3])
+                pred, inter_h = self.discriminator(interpolates, is_training, reuse=True)
+                print("pred shape:", pred.get_shape().as_list())
+                gradients = tf.gradients(pred, [interpolates])[0]
+                slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), reduction_indices=[1]))
+                gradient_penalty = tf.reduce_mean((slopes-1.)**2)
+                gradient_penalty = self.arch['LAMBDA']*gradient_penalty
+                tf.summary.histogram("gradient_penalty", gradient_penalty)
 
         loss = dict()
         loss['D_KL'] = D_KL
         loss['logP'] = logPx
 
-        batch_size = self.arch['training']['batch_size']
-
         #disc_real_loss = tf.losses.sigmoid_cross_entropy(disc_real, tf.ones([batch_size, 1]))
         #disc_fake_loss = tf.losses.sigmoid_cross_entropy(disc_fake, tf.fill([batch_size, 1], -1.0))
-        gen_loss = -tf.reduce_mean(disc_fake)
-        disc_loss = tf.reduce_mean(disc_fake - disc_real)
+        #disc_real_loss = -tf.reduce_mean(disc_real)
+        #disc_fake_loss = -tf.reduce_mean(disc_fake_loss)
+        gen_loss = tf.reduce_mean(-disc_fake)
+        disc_loss = tf.reduce_mean(disc_real) - tf.reduce_mean(disc_fake)
 
-        alpha = tf.random_uniform(
-            shape=[batch_size, 513,1,1],
-            minval=0.,
-            maxval=1.
-        )
+
 
         #gradient penalty
-        print("before gradient x shape:", x.get_shape().as_list())
-        differences = xh - x
-        interpolates = x + (alpha*differences)
-        print("interpolates shape:", interpolates.get_shape().as_list())
-        pred, inter_h = self.discriminator(interpolates, is_training)
-        print("pred shape:", pred.get_shape().as_list())
-        gradients = tf.gradients(pred, [interpolates])[0]
-        slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), reduction_indices=[1,2]))
-        gradient_penalty = tf.reduce_mean((slopes-1.)**2)
-        disc_loss += self.arch['LAMBDA']*gradient_penalty
+
 
         #d_loss = disc_real_loss + disc_fake_loss
         #g_loss = tf.losses.sigmoid_cross_entropy(disc_fake, tf.ones([batch_size, 1]))
         g_loss = gen_loss
-        d_loss = disc_loss
+        d_loss = disc_loss + gradient_penalty
+        tf.summary.histogram("D_KL", D_KL)
+        tf.summary.histogram("logpx", logPx)
+        tf.summary.histogram('xh', xh)
+        tf.summary.histogram('x', x)
+        tf.summary.histogram('gen_loss', gen_loss)
+        tf.summary.histogram('disc_loss', disc_loss)
+        tf.summary.histogram("gradient penalty", gradient_penalty)
+        tf.summary.histogram("Discriminator_loss", d_loss)
+        tf.summary.histogram("Generator_loss", g_loss)
 
-        loss['l_G'] = g_loss
+        loss['l_G'] = g_loss + logPx
         loss['l_D'] = d_loss
         loss['l_E'] = D_KL + logPx
-        loss['G'] = D_KL + logPx + 50.*d_loss
+        loss['G'] = (D_KL + logPx) + 50.*g_loss + loss['l_D']
         return loss
 
     def sample(self):
